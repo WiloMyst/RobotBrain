@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package Robot;
+
+// 任务类型:决定端侧采用的安全策略与关节速度上限
+enum TaskType {
+  TASK_UNKNOWN = 0;
+  NAVIGATE = 1;
+  FOLLOW = 2;
+  PICK = 3;
+  EMERGENCY_STOP = 4;
+}
+
+// 用户下发的期望速度 (base frame),作为 policy 输入的一部分
+message VelocityCommand {
+  float linear_x = 1;   // 前后速度 m/s
+  float linear_y = 2;   // 左右速度 m/s
+  float angular_z = 3;  // 偏航角速度 rad/s
+}
+
+message TaskRequest {
+  string task_id = 1;
+  TaskType task_type = 2;
+  string command = 3;
+  VelocityCommand velocity_cmd = 4;
+}
+
+message TaskResponse {
+  bool accepted = 1;
+  string status_msg = 2;
+}
+
+message StatusRequest {
+  int32 interval_ms = 1;
+}
+
+message RobotStatus {
+  enum State {
+    IDLE = 0;
+    EXECUTING = 1;
+    ERROR = 2;
+    STANDING = 3;
+  }
+
+  State state = 1;
+  string task_id = 2;
+  string command = 3;
+  TaskType task_type = 4;
+  uint64 task_generation = 5;
+  uint64 total_frames = 6;
+  uint64 dropped_frames = 7;
+  uint64 stale_frames = 8;
+  double last_inference_ms = 9;
+  double avg_inference_ms = 10;
+  repeated float joint_targets = 11;     // 当前下发的 12 维关节目标位置
+  repeated float joint_positions = 12;   // 最近观测到的关节位置 (反馈)
+  VelocityCommand velocity_cmd = 13;     // 当前生效的速度指令
+  int64 timestamp_ms = 14;
+  double jitter_p50_ms = 15;             // 控制周期 jitter P50 (ms)
+  double jitter_p95_ms = 16;             // 控制周期 jitter P95 (ms)
+  double jitter_p99_ms = 17;             // 控制周期 jitter P99 (ms)
+  double jitter_max_ms = 18;             // 控制周期 jitter max (ms)
+}
+
+service BrainService {
+  rpc AssignTask(TaskRequest) returns (TaskResponse) {}
+  rpc StreamStatus(StatusRequest) returns (stream RobotStatus) {}
+}

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>RobotBrain G1 MuJoCo Viewer</title>
+    <style>
+        body { margin:0; background:#1a1a1a; display:flex; flex-direction:column; align-items:center; }
+        h2 { color:#eee; font-family:sans-serif; margin:10px; }
+        img { max-width:90vw; max-height:80vh; image-rendering:auto; }
+    </style>
+</head>
+<body>
+    <h2>G1 MuJoCo Sim (auto-refresh 500ms)</h2>
+    <img id="sim" src="sim_view.png?t=0" alt="loading...">
+    <script>
+        setInterval(function() {
+            var img = document.getElementById('sim');
+            img.src = 'sim_view.png?t=' + Date.now();
+        }, 500);
+    </script>
+</body>
+</html>

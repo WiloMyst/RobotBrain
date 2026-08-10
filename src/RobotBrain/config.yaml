@@ -1,0 +1,48 @@
+server:
+  host: "0.0.0.0"
+  port: 50051
+  worker_threads: 4
+
+ai_brain:
+  policy_model_path: "models/policy_g1.onnx"
+  intra_op_threads: 2
+  use_gpu: false
+  num_joints: 12
+  obs_dim: 47
+  action_scale: 0.25
+  default_joint_positions: [-0.1, 0.0, 0.0, 0.3, -0.2, 0.0, -0.1, 0.0, 0.0, 0.3, -0.2, 0.0]
+  ang_vel_scale: 0.25
+  dof_pos_scale: 1.0
+  dof_vel_scale: 0.05
+  cmd_scale: [2.0, 2.0, 0.25]
+  gait_phase_period: 0.8
+
+robot:
+  joint_state_topic: "/joint_states"
+  imu_topic: "/imu"
+  joint_command_topic: "/joint_commands"
+  control_rate_ms: 20
+  watchdog_timeout_ms: 500
+
+safety:
+  max_joint_velocity: 5.0
+  max_joint_accel: 10.0
+  joint_position_limit: 1.0
+  max_vel_ramp: 2.0
+  fall_gravity_threshold: -0.2
+  fall_debounce_frames: 25
+  torque_limits: [60, 60, 60, 90, 40, 40, 60, 60, 60, 90, 40, 40]
+
+mujoco:
+  model_xml: "assets/mujoco/unitree_g1/scene.xml"
+  sim_dt: 0.002
+  control_rate_ms: 10
+  kp: [100, 100, 100, 150, 40, 40, 100, 100, 100, 150, 40, 40]
+  kd: [2, 2, 2, 4, 2, 2, 2, 2, 2, 4, 2, 2]
+  fall_height_threshold: 0.4
+  fall_pitch_threshold: 0.785
+
+realtime:
+  enabled: true
+  priority: 80
+  use_mlockall: true

@@ -1,6 +1,4 @@
-# =====================================================================
-# 1. ROS2 & CMake 构建输出 (绝对禁止提交编译产物)
-# =====================================================================
+# ROS2 & CMake build artifacts
 /build/
 /install/
 /log/
@@ -14,10 +12,9 @@ Makefile
 *.out
 bin/
 lib/
+generated/
 
-# =====================================================================
-# 2. Python 虚拟环境与缓存 (彻底隔离运行环境)
-# =====================================================================
+# Python venv & cache
 .venv/
 venv/
 env/
@@ -26,36 +23,39 @@ __pycache__/
 *$py.class
 .pytest_cache/
 
-# =====================================================================
-# 3. gRPC & Protobuf 自动生成文件 (只管杀不管埋，动态生成的文件绝不入库)
-# =====================================================================
-# 忽略 Python 自动生成的 gRPC 胶水代码 (保留原生的 .proto 契约文件即可)
+# gRPC & Protobuf generated (C++ & Python)
 protos/*_pb2.py
 protos/*_pb2_grpc.py
 protos/*_pb2.pyi
 protos/*_pb2_grpc.pyi
+*.pb.cc
+*.pb.h
 
-# C++ 生成的代码因为我们配置在了 build/generated 里，所以已经被顶部的 /build/ 覆盖了
-
-# =====================================================================
-# 4. AI 大模型权重与缓存 (大型二进制资产隔离)
-# =====================================================================
-# 严禁将大模型直接塞进 Git！应当使用 DVC (Data Version Control) 或单独的下载脚本
+# ML model weights & cache
 *.onnx
+*.onnx.json
+*.onnx.data
 *.engine
 *.trt
 *.plan
+*.pt
+*.bin
 trt_cache/
-models/*.onnx
-models/*.engine
-# (注：如果你那个 dummy_vla.onnx 只有几百KB，想强行提交作为测试用，可以在终端执行：git add -f models/dummy_vla.onnx)
+models/
 
-# =====================================================================
-# 5. IDE 配置与系统级垃圾文件
-# =====================================================================
+# Runtime logs
+logs/
+
+# Third-party assets (downloaded by scripts)
+third_party/
+src/RobotBrain/assets/
+
+# IDE & OS files
 .vscode/
 .idea/
 *.swp
 *.swo
 .DS_Store
 Thumbs.db
+
+AGENTS.md
