@@ -141,6 +141,7 @@ void AIBrain::ProcessRobotTask(const std::string& task_id,
     if (task_type == ::Robot::EMERGENCY_STOP) {
         metrics_.current_state.store(RobotState::STANDING);
         std::fill(prev_actions_.begin(), prev_actions_.end(), 0.0f);
+        policy_model_->ResetHiddenState();
         last_joint_targets_ = default_joint_positions_;
         ros_body_->PublishJointCommand(default_joint_positions_);
         spdlog::warn("[EmergencyStop] task [{}], generation -> {}", task_id, gen);
@@ -189,11 +190,18 @@ void AIBrain::ControlLoopStep() {
             return;
         }
 
-        // 倒地检测已禁用:ai_brain 层的检测会在 policy 挣扎时误触发,
-        // 清 LSTM / 强制 default 都会打断 policy 的主动平衡,反而致摔。
-        // 实际仿真复位由 mujoco_sim 的倒地检测(h<0.4 / |pitch|>45°)负责,
-        // policy 连续运行不被干扰 —— 与 diagnose_v5.py 验证通过的行为一致。
-        // (DetectFall(prop)) {}
+        // 仿真重置检测:mujoco_sim 倒地重置后,gravity_z 会从 ~0 突变回 ~-1
+        // 此时必须清零 LSTM 状态,否则 policy 带着"倒地记忆"推理 → 输出异常
+        static float last_gravity_z = -1.0f;
+        float cur_gravity_z = prop.projected_gravity[2];
+        if (last_gravity_z > -0.3f && cur_gravity_z < -0.7f) {
+            spdlog::warn("[RESET] gravity_z {:.2f}->{:.2f}, resetting LSTM + prev_actions",
+                         last_gravity_z, cur_gravity_z);
+            policy_model_->ResetHiddenState();
+            std::fill(prev_actions_.begin(), prev_actions_.end(), 0.0f);
+            last_joint_targets_ = default_joint_positions_;
+        }
+        last_gravity_z = cur_gravity_z;
 
         // 速度渐变:current_vel_cmd_ 向 target 渐变,STAND->EXECUTING 不跳变
         float dt = (last_control_ms_ > 0)

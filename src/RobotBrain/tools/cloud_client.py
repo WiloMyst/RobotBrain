@@ -1,12 +1,8 @@
 """
-云端客户端测试脚本
+键盘交互式云端控制客户端
 
-测试两个 RPC:
-1. AssignTask: 向边缘节点下发语义指令 + 速度指令
-2. StreamStatus: 接收实时运行状态流 (含关节目标反馈)
-
-运行方式:
-  python cloud_client.py
+W/S: 前进/减速  A/D: 左转/右转  Space: 急停  Q: 退出
+实时显示 G1 状态 + 当前下发的速度指令
 """
 
 import grpc
@@ -14,8 +10,10 @@ import time
 import threading
 import sys
 import os
+import termios
+import tty
+import select
 
-# 将 proto 生成目录加入 path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'protos'))
 
 try:
@@ -25,74 +23,143 @@ except ImportError:
     print("Error: proto files not generated. Run: cd tools && bash generate_proto.sh")
     sys.exit(1)
 
+# 共享状态
+current_vx = 0.0
+current_wz = 0.0
+latest_status = None
+status_lock = threading.Lock()
+running = True
+
 
 def stream_status(stub):
+    global latest_status
     try:
-        request = rb_pb.StatusRequest(interval_ms=500)
-        stream = stub.StreamStatus(request)
-
-        state_names = {0: "IDLE", 1: "EXECUTING", 2: "ERROR", 3: "STANDING"}
-        task_type_names = {0: "UNKNOWN", 1: "NAVIGATE", 2: "FOLLOW", 3: "PICK", 4: "ESTOP"}
-
+        stream = stub.StreamStatus(rb_pb.StatusRequest(interval_ms=200))
         for status in stream:
-            vc = status.velocity_cmd
-            joints = status.joint_targets
-            joints_str = ",".join(f"{j:+.2f}" for j in joints[:4])
-            print(f"\r[{state_names.get(status.state, '?'):9s}] "
-                  f"type={task_type_names.get(status.task_type, '?'):8s} "
-                  f"gen={status.task_generation:3d} "
-                  f"frames={status.total_frames:5d} "
-                  f"dropped={status.dropped_frames:3d} "
-                  f"stale={status.stale_frames:3d} "
-                  f"inf={status.avg_inference_ms:6.1f}ms "
-                  f"jit(P50/P99)={status.jitter_p50_ms:.1f}/{status.jitter_p99_ms:.1f}ms "
-                  f"vel=({vc.linear_x:+.2f},{vc.linear_y:+.2f},{vc.angular_z:+.2f}) "
-                  f"j=[{joints_str}...]",
-                  end='', flush=True)
+            with status_lock:
+                latest_status = status
+    except grpc.RpcError:
+        pass
 
-    except grpc.RpcError as e:
-        print(f"\nStatus stream closed: {e.code()}")
+
+def send_task(stub, vx, wz, task_type=rb_pb.NAVIGATE):
+    vc = rb_pb.VelocityCommand(linear_x=vx, linear_y=0.0, angular_z=wz)
+    req = rb_pb.TaskRequest(
+        task_id=f"key-{int(time.time()*1000)}",
+        task_type=task_type,
+        command=f"vx={vx:.1f} wz={wz:.1f}",
+        velocity_cmd=vc)
+    try:
+        resp = stub.AssignTask(req)
+        return resp.accepted
+    except grpc.RpcError:
+        return False
+
+
+def draw_screen():
+    global current_vx, current_wz
+    state_names = {0: "IDLE", 1: "EXECUTING", 2: "ERROR", 3: "STANDING"}
+
+    with status_lock:
+        s = latest_status
+
+    if s:
+        vc = s.velocity_cmd
+        joints = s.joint_targets[:4]
+        joints_str = ",".join(f"{j:+.2f}" for j in joints)
+        line1 = (f"\r[{state_names.get(s.state, '?'):9s}] "
+                 f"gen={s.task_generation:3d} "
+                 f"frames={s.total_frames:5d} "
+                 f"drop={s.dropped_frames:2d} "
+                 f"stale={s.stale_frames:2d} "
+                 f"inf={s.avg_inference_ms:4.1f}ms "
+                 f"jit={s.jitter_p50_ms:.1f}/{s.jitter_p99_ms:.1f}ms")
+    else:
+        line1 = "\r[connecting...]"
+
+    bar_vx = int(current_vx * 20) * '#'
+    bar_wz_l = int(max(0, -current_wz) * 20) * '<'
+    bar_wz_r = int(max(0, current_wz) * 20) * '>'
+    line2 = (f"  vx=[{bar_vx:20s}] {current_vx:+.2f}  "
+             f"wz=[{bar_wz_l:>10s}{bar_wz_r:10s}] {current_wz:+.2f}")
+
+    line3 = "  W/S:前/退  A/D:左/右  Space:急停  Q:退出"
+
+    sys.stdout.write(f"\r\033[K{line1}\n\033[K{line2}\n\033[K{line3}\033[1A\033[1A")
+    sys.stdout.flush()
 
 
 def main():
+    global current_vx, current_wz, running
+
     server_addr = "localhost:50051"
     print(f"Connecting to RobotBrain at {server_addr}...")
 
     channel = grpc.insecure_channel(server_addr)
     stub = rb_grpc.BrainServiceStub(channel)
 
-    status_thread = threading.Thread(target=stream_status, args=(stub,), daemon=True)
-    status_thread.start()
+    # 等待连接
+    try:
+        grpc.channel_ready_future(channel).result(timeout=5)
+    except grpc.FutureTimeoutError:
+        print("Error: cannot connect to RobotBrain")
+        return
 
-    time.sleep(2)
+    # 状态接收线程
+    threading.Thread(target=stream_status, args=(stub,), daemon=True).start()
+    time.sleep(0.5)
 
-    # (task_id, task_type, command, velocity_cmd=(vx, vy, wz))
-    tasks = [
-        ("task-001", rb_pb.NAVIGATE, "navigate to kitchen", (0.5, 0.0, 0.0)),
-        ("task-002", rb_pb.PICK, "pick up the red cup", (0.0, 0.0, 0.0)),
-        ("task-003", rb_pb.FOLLOW, "follow the person in blue", (0.3, 0.0, 0.1)),
-        ("task-004", rb_pb.EMERGENCY_STOP, "emergency stop", (0.0, 0.0, 0.0)),
-    ]
+    # 初始下发 STAND(vx=0)
+    send_task(stub, 0.0, 0.0)
 
-    for task_id, task_type, command, vel in tasks:
-        print(f"\n>> Sending task: [{task_id}] type={task_type} {command} vel={vel}")
-        vc = rb_pb.VelocityCommand(linear_x=vel[0], linear_y=vel[1], angular_z=vel[2])
-        request = rb_pb.TaskRequest(task_id=task_id, task_type=task_type,
-                                    command=command, velocity_cmd=vc)
+    # 键盘 raw 模式
+    old_settings = termios.tcgetattr(sys.stdin)
+    tty.setraw(sys.stdin.fileno())
 
+    print("\n=== G1 Keyboard Control ===")
+    print("W: 前进  S: 减速  A: 左转  D: 右转  Space: 急停  Q: 退出\n")
+
+    try:
+        while running:
+            # 非阻塞读键盘
+            if select.select([sys.stdin], [], [], 0.1)[0]:
+                ch = sys.stdin.read(1)
+                ch_lower = ch.lower()
+
+                if ch_lower == 'q':
+                    running = False
+                    break
+                elif ch_lower == 'w':
+                    current_vx = min(1.0, current_vx + 0.1)
+                    send_task(stub, current_vx, current_wz)
+                elif ch_lower == 's':
+                    current_vx = max(0.0, current_vx - 0.1)
+                    send_task(stub, current_vx, current_wz)
+                elif ch_lower == 'a':
+                    current_wz = min(0.5, current_wz + 0.1)
+                    send_task(stub, current_vx, current_wz)
+                elif ch_lower == 'd':
+                    current_wz = max(-0.5, current_wz - 0.1)
+                    send_task(stub, current_vx, current_wz)
+                elif ch == ' ':
+                    current_vx = 0.0
+                    current_wz = 0.0
+                    send_task(stub, 0.0, 0.0, task_type=rb_pb.EMERGENCY_STOP)
+
+            draw_screen()
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        running = False
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+        # 急停
         try:
-            response = stub.AssignTask(request)
-            print(f"<< Response: accepted={response.accepted}, msg='{response.status_msg}'")
-        except grpc.RpcError as e:
-            print(f"<< Error: {e.code()} - {e.details()}")
-
-        time.sleep(5)
-
-    print("\n>> Stopping task submission, waiting for watchdog timeout...")
-    time.sleep(3)
-
-    print("\nDone.")
-    channel.close()
+            send_task(stub, 0.0, 0.0, task_type=rb_pb.EMERGENCY_STOP)
+        except:
+            pass
+        channel.close()
+        print("\n\nDisconnected.")
 
 
 if __name__ == '__main__':

@@ -28,7 +28,7 @@ safety:
   max_joint_velocity: 5.0
   max_joint_accel: 10.0
   joint_position_limit: 1.0
-  max_vel_ramp: 2.0
+  max_vel_ramp: 0.5
   fall_gravity_threshold: -0.2
   fall_debounce_frames: 25
   torque_limits: [60, 60, 60, 90, 40, 40, 60, 60, 60, 90, 40, 40]
